@@ -1,0 +1,391 @@
+"""
+FastAPI router for sports predictions.
+
+Endpoints
+---------
+GET  /api/sports/leagues                       List all leagues grouped by country
+GET  /api/sports/fixtures                      Upcoming fixtures for a league
+GET  /api/sports/predict                       Predict the outcome of one match
+GET  /api/sports/predict/batch                 Predict all fixtures in a league
+GET  /api/sports/value-bets/{league_id}        Fixtures with value bet detection
+POST /api/sports/reload-model                  Hot-reload the ML model from disk
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from services.football_api import APIFootballError, get_fixtures, get_standings
+from services.odds_api import (
+    OddsAPIError,
+    annotate_with_value_bets,
+    find_match_odds,
+    get_league_odds,
+)
+from services.prediction import predict_match, reload_model
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Response models — kept explicit so FastAPI auto-generates clean OpenAPI docs
+# ---------------------------------------------------------------------------
+
+class TeamInfo(BaseModel):
+    id: int
+    name: str
+
+
+class FixtureResponse(BaseModel):
+    fixture_id: int
+    home_team: TeamInfo
+    away_team: TeamInfo
+    league: str
+    league_id: int
+    date: str
+    status: str
+    venue: str | None = None
+
+
+class PredictionResponse(BaseModel):
+    home_team: str
+    away_team: str
+    league_id: int
+    home_prob: float
+    draw_prob: float
+    away_prob: float
+    prediction: Literal["HOME", "DRAW", "AWAY"]
+    confidence: int
+    is_value_bet: bool = False
+    bookmaker_odds: float | None = None
+    edge: float | None = None           # positive = value; expressed in %
+    model_used: str
+    features: dict = Field(default_factory=dict, exclude=True)
+
+
+class ValueBetResponse(BaseModel):
+    fixture_id: int | None = None
+    home_team: str
+    away_team: str
+    prediction: Literal["HOME", "DRAW", "AWAY"]
+    confidence: int
+    home_prob: float
+    draw_prob: float
+    away_prob: float
+    bookmaker_odds: float
+    edge: float                         # % edge over implied probability
+    model_used: str
+
+
+class ReloadResponse(BaseModel):
+    success: bool
+    message: str
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _parse_fixture(raw: dict) -> FixtureResponse:
+    """
+    Convert a raw API-Football fixture dict into our clean FixtureResponse.
+    Handles missing optional fields gracefully.
+    """
+    fixture = raw.get("fixture", {})
+    teams   = raw.get("teams",   {})
+    league  = raw.get("league",  {})
+    venue   = fixture.get("venue", {})
+
+    return FixtureResponse(
+        fixture_id = fixture.get("id", 0),
+        home_team  = TeamInfo(
+            id   = teams.get("home", {}).get("id",   0),
+            name = teams.get("home", {}).get("name", "Unknown"),
+        ),
+        away_team  = TeamInfo(
+            id   = teams.get("away", {}).get("id",   0),
+            name = teams.get("away", {}).get("name", "Unknown"),
+        ),
+        league     = league.get("name", ""),
+        league_id  = league.get("id",   0),
+        date       = fixture.get("date", ""),
+        status     = fixture.get("status", {}).get("long", ""),
+        venue      = venue.get("name") if isinstance(venue, dict) else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/leagues", summary="List all supported leagues grouped by country")
+async def list_leagues() -> dict[str, list[dict]]:
+    """
+    Return the static league registry used by the frontend sidebar.
+    No API call is made — data comes from the in-process constants.
+    """
+    # Imported here to avoid a circular import at module level
+    from ml.features import FEATURE_COLS  # noqa: F401 (confirm import works)
+
+    leagues: dict[str, list[dict]] = {
+        "France":   [{"id": 61, "name": "Ligue 1"},        {"id": 62, "name": "Ligue 2"}],
+        "England":  [{"id": 39, "name": "Premier League"},  {"id": 40, "name": "Championship"}],
+        "Spain":    [{"id": 140, "name": "La Liga"},         {"id": 141, "name": "La Liga 2"}],
+        "Germany":  [{"id": 78, "name": "Bundesliga"},       {"id": 79, "name": "2. Bundesliga"}],
+        "Italy":    [{"id": 135, "name": "Serie A"},          {"id": 136, "name": "Serie B"}],
+        "Champions":[{"id": 2,  "name": "Champions League"}],
+        "Europa":   [{"id": 3,  "name": "Europa League"}],
+    }
+    return leagues
+
+
+@router.get(
+    "/fixtures",
+    response_model=list[FixtureResponse],
+    summary="Upcoming fixtures for a league",
+)
+async def fixtures(
+    league_id: int = Query(..., description="API-Football league ID, e.g. 39 for EPL"),
+    season:    int = Query(2024, description="Season year, e.g. 2024"),
+    next_n:    int = Query(10,  ge=1, le=20, description="Number of upcoming fixtures to return"),
+) -> list[FixtureResponse]:
+    """
+    Return the next N scheduled fixtures for a competition.
+    Data is fetched live from API-Football — one request per call.
+    """
+    try:
+        raw_fixtures = await get_fixtures(league_id, season, next_n)
+    except APIFootballError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return [_parse_fixture(f) for f in raw_fixtures]
+
+
+@router.get(
+    "/predict",
+    response_model=PredictionResponse,
+    summary="Predict the outcome of one match",
+)
+async def predict(
+    home_id:   int = Query(..., description="API-Football team ID for the home team"),
+    away_id:   int = Query(..., description="API-Football team ID for the away team"),
+    league_id: int = Query(..., description="API-Football league ID"),
+    season:    int = Query(2024),
+    with_odds: bool = Query(False, description="Fetch bookmaker odds and detect value bets"),
+    home_name: str = Query("", description="Home team name (required if with_odds=true)"),
+    away_name: str = Query("", description="Away team name (required if with_odds=true)"),
+) -> PredictionResponse:
+    """
+    Predict a single match.
+
+    1. Fetches team stats and H2H data concurrently from API-Football.
+    2. Builds the feature vector.
+    3. Runs the XGBoost model (or rule-based fallback).
+    4. Optionally fetches bookmaker odds and annotates the value bet edge.
+    """
+    try:
+        result = await predict_match(home_id, away_id, league_id, season)
+    except APIFootballError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Optionally enrich with bookmaker odds
+    if with_odds and home_name and away_name:
+        try:
+            odds_list   = await get_league_odds(league_id)
+            match_odds  = find_match_odds(odds_list, home_name, away_name)
+            result      = annotate_with_value_bets(result, match_odds)
+        except OddsAPIError as exc:
+            # Odds failure is non-fatal — return prediction without value bet info
+            logger.warning("Odds API error (non-fatal): %s", exc)
+
+    return PredictionResponse(
+        home_team     = home_name or f"Team #{home_id}",
+        away_team     = away_name or f"Team #{away_id}",
+        league_id     = league_id,
+        home_prob     = result["home_prob"],
+        draw_prob     = result["draw_prob"],
+        away_prob     = result["away_prob"],
+        prediction    = result["prediction"],
+        confidence    = result["confidence"],
+        is_value_bet  = result.get("is_value_bet", False),
+        bookmaker_odds= result.get("bookmaker_odds"),
+        edge          = result.get("edge"),
+        model_used    = result["model_used"],
+        features      = result.get("features", {}),
+    )
+
+
+@router.get(
+    "/predict/batch",
+    response_model=list[PredictionResponse],
+    summary="Predict all upcoming fixtures in a league",
+)
+async def predict_batch(
+    league_id:  int  = Query(..., description="API-Football league ID"),
+    season:     int  = Query(2024),
+    next_n:     int  = Query(10, ge=1, le=20),
+    with_odds:  bool = Query(False, description="Annotate value bets from bookmaker odds"),
+) -> list[PredictionResponse]:
+    """
+    Fetch upcoming fixtures and predict all of them.
+
+    Fixture fetching and prediction API calls are made concurrently where
+    possible.  Failures on individual matches are logged and skipped rather
+    than aborting the whole batch.
+    """
+    try:
+        raw_fixtures = await get_fixtures(league_id, season, next_n)
+    except APIFootballError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if not raw_fixtures:
+        return []
+
+    # Optionally pre-fetch odds once for the whole league (one API call)
+    odds_list: list[dict] = []
+    if with_odds:
+        try:
+            odds_list = await get_league_odds(league_id)
+        except OddsAPIError as exc:
+            logger.warning("Batch odds fetch failed (non-fatal): %s", exc)
+
+    async def _predict_one(raw: dict) -> PredictionResponse | None:
+        fixture   = raw.get("fixture", {})
+        teams     = raw.get("teams",   {})
+        league    = raw.get("league",  {})
+        home_id   = teams.get("home", {}).get("id")
+        away_id   = teams.get("away", {}).get("id")
+        home_name = teams.get("home", {}).get("name", "")
+        away_name = teams.get("away", {}).get("name", "")
+
+        if not home_id or not away_id:
+            return None
+
+        try:
+            result = await predict_match(home_id, away_id, league_id, season)
+        except (APIFootballError, Exception) as exc:  # noqa: BLE001
+            logger.warning("Skipping fixture %s — prediction failed: %s",
+                           fixture.get("id"), exc)
+            return None
+
+        if with_odds and odds_list:
+            match_odds = find_match_odds(odds_list, home_name, away_name)
+            result     = annotate_with_value_bets(result, match_odds)
+
+        return PredictionResponse(
+            home_team     = home_name,
+            away_team     = away_name,
+            league_id     = league.get("id", league_id),
+            home_prob     = result["home_prob"],
+            draw_prob     = result["draw_prob"],
+            away_prob     = result["away_prob"],
+            prediction    = result["prediction"],
+            confidence    = result["confidence"],
+            is_value_bet  = result.get("is_value_bet", False),
+            bookmaker_odds= result.get("bookmaker_odds"),
+            edge          = result.get("edge"),
+            model_used    = result["model_used"],
+        )
+
+    # Predict all fixtures concurrently — each call already uses gather() internally
+    predictions = await asyncio.gather(*[_predict_one(f) for f in raw_fixtures])
+    # Filter out None values (skipped fixtures)
+    return [p for p in predictions if p is not None]
+
+
+@router.get(
+    "/value-bets/{league_id}",
+    response_model=list[ValueBetResponse],
+    summary="Return only matches with a positive value bet edge",
+)
+async def value_bets(
+    league_id: int,
+    season:    int   = Query(2024),
+    next_n:    int   = Query(10, ge=1, le=20),
+    threshold: float = Query(0.05, ge=0.01, le=0.30,
+                             description="Minimum edge (fraction) to qualify as value bet"),
+) -> list[ValueBetResponse]:
+    """
+    Predict upcoming fixtures and return only those with a value bet edge
+    above ``threshold``.
+
+    Requires a valid ODDS_API_KEY in the environment — returns an empty list
+    if the odds fetch fails.
+    """
+    try:
+        raw_fixtures = await get_fixtures(league_id, season, next_n)
+    except APIFootballError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if not raw_fixtures:
+        return []
+
+    try:
+        odds_list = await get_league_odds(league_id)
+    except OddsAPIError as exc:
+        logger.warning("Odds unavailable for value-bets endpoint: %s", exc)
+        return []
+
+    results: list[ValueBetResponse] = []
+
+    for raw in raw_fixtures:
+        teams     = raw.get("teams",   {})
+        fixture   = raw.get("fixture", {})
+        home_id   = teams.get("home", {}).get("id")
+        away_id   = teams.get("away", {}).get("id")
+        home_name = teams.get("home", {}).get("name", "")
+        away_name = teams.get("away", {}).get("name", "")
+
+        if not home_id or not away_id:
+            continue
+
+        try:
+            pred = await predict_match(home_id, away_id, league_id, season)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Prediction failed for %s vs %s: %s", home_name, away_name, exc)
+            continue
+
+        match_odds = find_match_odds(odds_list, home_name, away_name)
+        annotated  = annotate_with_value_bets(pred, match_odds, threshold)
+
+        if annotated.get("is_value_bet") and annotated.get("bookmaker_odds") is not None:
+            results.append(ValueBetResponse(
+                fixture_id     = fixture.get("id"),
+                home_team      = home_name,
+                away_team      = away_name,
+                prediction     = annotated["prediction"],
+                confidence     = annotated["confidence"],
+                home_prob      = annotated["home_prob"],
+                draw_prob      = annotated["draw_prob"],
+                away_prob      = annotated["away_prob"],
+                bookmaker_odds = annotated["bookmaker_odds"],
+                edge           = annotated["edge"],
+                model_used     = annotated["model_used"],
+            ))
+
+    # Sort by edge descending — highest value first
+    results.sort(key=lambda x: x.edge, reverse=True)
+    return results
+
+
+@router.post(
+    "/reload-model",
+    response_model=ReloadResponse,
+    summary="Hot-reload the ML model from disk without restarting the server",
+)
+async def reload_model_endpoint() -> ReloadResponse:
+    """
+    Tell the prediction service to reload its model from MODEL_PATH.
+    Call this after running ``python ml/train.py`` to pick up a newly trained model.
+    """
+    success = reload_model()
+    return ReloadResponse(
+        success = success,
+        message = "Model reloaded successfully." if success
+                  else "Model file not found or failed to load — using rule-based fallback.",
+    )
