@@ -80,6 +80,6 @@ jobs:
 
       - name: Deploy to Railway
         working-directory: sportpredict/backend
-        run: railway up --detach --service backend --project ${{ secrets.RAILWAY_PROJECT_ID }}
+        run: railway up --detach --service backend --project ${{ secrets.RAILWAY_PROJECT_ID }} --environment production
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

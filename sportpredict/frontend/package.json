@@ -15,7 +15,6 @@
     "@capacitor/android": "8.4.0",
     "@capacitor/cli": "8.4.0",
     "@capacitor/core": "8.4.0",
-    "@supabase/auth-helpers-nextjs": "^0.15.0",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.107.0",
     "axios": "^1.17.0",
