@@ -10,7 +10,7 @@ export interface Match {
   isValueBet: boolean;
   matchDate: string;
   league: string;
-  leagueId: number;
+  leagueId: string;
   homeForm: string;
   awayForm: string;
 }

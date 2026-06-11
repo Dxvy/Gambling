@@ -16,8 +16,8 @@ const COUNTRY_FLAGS: Record<string, string> = {
 };
 
 interface LeagueSidebarProps {
-  activeLeague: number | null;
-  onSelect: (id: number | null) => void;
+  activeLeague: string | null;
+  onSelect: (id: string | null) => void;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -27,8 +27,8 @@ function SidebarContent({
   onSelect,
   onClose,
 }: {
-  activeLeague: number | null;
-  onSelect: (id: number | null) => void;
+  activeLeague: string | null;
+  onSelect: (id: string | null) => void;
   onClose: () => void;
 }) {
   const [expanded, setExpanded] = useState<string[]>(["France", "England"]);
@@ -41,7 +41,7 @@ function SidebarContent({
     );
   }
 
-  function selectLeague(id: number | null) {
+  function selectLeague(id: string | null) {
     onSelect(id);
     onClose();
   }

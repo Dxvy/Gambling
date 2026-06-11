@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 export default function SportsPage() {
   const [activeSport, setActiveSport] = useState("football");
-  const [activeLeague, setActiveLeague] = useState<number | null>(null);
+  const [activeLeague, setActiveLeague] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (

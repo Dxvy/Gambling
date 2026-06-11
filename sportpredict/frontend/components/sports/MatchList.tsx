@@ -7,7 +7,7 @@ import { mockMatches } from "@/lib/mock-data";
 
 interface MatchListProps {
   sport: string;
-  leagueId: number | null;
+  leagueId: string | null;
 }
 
 function MatchCardSkeleton() {
