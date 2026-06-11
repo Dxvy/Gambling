@@ -11,6 +11,7 @@ import NumberGrid   from "@/components/lottery/NumberGrid";
 import SelectedBalls from "@/components/lottery/SelectedBalls";
 import SavedGridsList from "@/components/lottery/SavedGridsList";
 import { cn } from "@/lib/utils";
+import { fetchLotteryInsight } from "@/lib/api";
 import {
   LOTTERY_CONFIGS,
   STRATEGIES,
@@ -66,6 +67,11 @@ export default function LotteryPage() {
   const [saveStatus,    setSaveStatus]    = useState<"idle" | "ok" | "err">("idle");
   const [refreshToken,  setRefreshToken]  = useState(0);
 
+  // AI insight
+  const [insight,        setInsight]        = useState<string | null>(null);
+  const [isLoadingInsight, setIsLoadingInsight] = useState(false);
+  const [insightError,   setInsightError]   = useState(false);
+
   // Keep track of reveal timers so we can cancel them on new generate
   const revealTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -102,6 +108,8 @@ export default function LotteryPage() {
     revealTimers.current = [];
     setRevealedCount(0);
     setSuggestion(null);
+    setInsight(null);
+    setInsightError(false);
 
     try {
       const data = await fetchSuggestion(lottery, strategy);
@@ -150,6 +158,28 @@ export default function LotteryPage() {
       setSaveStatus("err");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  // ── AI Insight ────────────────────────────────────────────────────────────
+
+  async function getInsight() {
+    if (!suggestion) return;
+    if (insight) {
+      setInsight(null);
+      return;
+    }
+    setIsLoadingInsight(true);
+    setInsightError(false);
+    try {
+      const { insight: text } = await fetchLotteryInsight(
+        lottery, suggestion.numbers, suggestion.bonus, strategy,
+      );
+      setInsight(text);
+    } catch {
+      setInsightError(true);
+    } finally {
+      setIsLoadingInsight(false);
     }
   }
 
@@ -288,8 +318,8 @@ export default function LotteryPage() {
                 lotteryLabel={config.label}
               />
 
-              {/* Save button */}
-              <div className="flex items-center gap-3 pt-1">
+              {/* Save / AI Insight buttons */}
+              <div className="flex flex-wrap items-center gap-3 pt-1">
                 <button
                   onClick={saveGrid}
                   disabled={isSaving || revealedCount < suggestion.numbers.length}
@@ -303,6 +333,19 @@ export default function LotteryPage() {
                   {isSaving ? "Saving…" : "Save Grid"}
                 </button>
 
+                <button
+                  onClick={getInsight}
+                  disabled={isLoadingInsight || revealedCount < suggestion.numbers.length}
+                  className={cn(
+                    "flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors",
+                    "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <Sparkles className={cn("h-4 w-4", isLoadingInsight && "animate-spin")} />
+                  {isLoadingInsight ? "Thinking…" : insight ? "Hide insight" : "AI Insight"}
+                </button>
+
                 {saveStatus === "ok" && (
                   <span className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
                     <CheckCircle className="h-3.5 w-3.5" /> Saved!
@@ -313,7 +356,22 @@ export default function LotteryPage() {
                     <AlertCircle className="h-3.5 w-3.5" /> Log in to save grids.
                   </span>
                 )}
+                {insightError && (
+                  <span className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+                    <AlertCircle className="h-3.5 w-3.5" /> Insight unavailable.
+                  </span>
+                )}
               </div>
+
+              {/* AI Insight text */}
+              {insight && (
+                <div className="rounded-xl bg-muted/60 p-3 text-sm leading-relaxed text-muted-foreground">
+                  <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-foreground/70">
+                    <Sparkles className="h-3.5 w-3.5" /> AI Insight
+                  </div>
+                  {insight}
+                </div>
+              )}
             </CardContent>
           </Card>
         )}

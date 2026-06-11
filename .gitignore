@@ -1,0 +1,6 @@
+.vercel
+.env*
+VERCEL.txt
+.mcp.json
+.idea/
+SportPredict_Build_Documentation.docx

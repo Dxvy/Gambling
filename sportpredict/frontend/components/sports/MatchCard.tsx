@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Save, CheckCircle, AlertCircle } from "lucide-react";
+import { Save, CheckCircle, AlertCircle, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { fetchMatchInsight } from "@/lib/api";
 import type { Match } from "@/lib/types";
 
 const OUTCOMES = ["HOME", "DRAW", "AWAY"] as const;
@@ -61,6 +62,30 @@ export default function MatchCard({
 
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "ok" | "err">("idle");
+
+  const [insight, setInsight] = useState<string | null>(null);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [insightError, setInsightError] = useState(false);
+
+  async function handleInsight() {
+    if (insight) {
+      setInsight(null);
+      return;
+    }
+    setInsightLoading(true);
+    setInsightError(false);
+    try {
+      const { insight: text } = await fetchMatchInsight({
+        homeTeam, awayTeam, league, homeProb, drawProb, awayProb,
+        prediction, confidence, isValueBet, homeForm, awayForm,
+      });
+      setInsight(text);
+    } catch {
+      setInsightError(true);
+    } finally {
+      setInsightLoading(false);
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -151,7 +176,7 @@ export default function MatchCard({
         {/* Confidence bar */}
         <ConfidenceBar value={confidence} />
 
-        {/* Save button */}
+        {/* Save / AI Insight buttons */}
         <div className="flex items-center gap-2 pt-0.5">
           <button
             onClick={handleSave}
@@ -165,6 +190,18 @@ export default function MatchCard({
             <Save className="h-3 w-3" />
             {saving ? "Saving…" : "Save"}
           </button>
+          <button
+            onClick={handleInsight}
+            disabled={insightLoading}
+            className={cn(
+              "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+              "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+            )}
+          >
+            <Sparkles className={cn("h-3 w-3", insightLoading && "animate-spin")} />
+            {insightLoading ? "Thinking…" : insight ? "Hide insight" : "AI Insight"}
+          </button>
           {saveStatus === "ok" && (
             <span className="flex items-center gap-1 text-[10px] text-green-600 dark:text-green-400">
               <CheckCircle className="h-3 w-3" /> Saved
@@ -175,7 +212,22 @@ export default function MatchCard({
               <AlertCircle className="h-3 w-3" /> Log in to save
             </span>
           )}
+          {insightError && (
+            <span className="flex items-center gap-1 text-[10px] text-red-600 dark:text-red-400">
+              <AlertCircle className="h-3 w-3" /> Insight unavailable
+            </span>
+          )}
         </div>
+
+        {/* AI Insight text */}
+        {insight && (
+          <div className="rounded-lg bg-muted/60 p-2.5 text-xs leading-relaxed text-muted-foreground">
+            <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-foreground/70">
+              <Sparkles className="h-3 w-3" /> AI Insight
+            </div>
+            {insight}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

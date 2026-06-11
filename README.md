@@ -78,6 +78,7 @@ App is now available at `http://localhost:3000`.
 NEXT_PUBLIC_SUPABASE_URL=https://<project-id>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=<vapid-public-key>
 ```
 
 ### Backend (`sportpredict/backend/.env`)
@@ -85,20 +86,29 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```env
 SUPABASE_URL=https://<project-id>.supabase.co
 SUPABASE_SERVICE_KEY=<service-role-key>
+ANTHROPIC_API_KEY=<anthropic-api-key>
+VAPID_PRIVATE_KEY=<vapid-private-key>
+VAPID_CLAIMS_EMAIL=mailto:you@example.com
 ```
+
+`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` are a matching key pair used for Web Push
+(generate with `npx web-push generate-vapid-keys`). `ANTHROPIC_API_KEY` powers
+the AI insight endpoints (`/api/sports/insight`, `/api/lottery/insight`).
 
 ---
 
 ## Database (Supabase)
 
 1. Create a free project at [supabase.com](https://supabase.com).
-2. In the SQL editor, run the migration:
+2. In the SQL editor, run the migrations in order:
 
 ```bash
 # Paste contents of sportpredict/supabase/migrations/001_initial_schema.sql
+# then sportpredict/supabase/migrations/002_push_subscriptions.sql
 ```
 
-This creates the `prediction_history` and `lottery_grids` tables with Row Level Security enabled.
+`001` creates the `prediction_history` and `lottery_grids` tables, and `002` creates the
+`push_subscriptions` table — all with Row Level Security enabled.
 
 3. Enable Google OAuth in **Authentication → Providers → Google** (requires a Google Cloud OAuth client ID/secret).
 
@@ -118,6 +128,7 @@ This creates the `prediction_history` and `lottery_grids` tables with Row Level 
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `NEXT_PUBLIC_API_BASE_URL` (your Railway backend URL)
+   - `NEXT_PUBLIC_VAPID_PUBLIC_KEY`
 4. Deploy.
 
 ### Backend → Railway
@@ -128,6 +139,9 @@ This creates the `prediction_history` and `lottery_grids` tables with Row Level 
 4. Add environment variables:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_KEY`
+   - `ANTHROPIC_API_KEY`
+   - `VAPID_PRIVATE_KEY`
+   - `VAPID_CLAIMS_EMAIL`
 5. Update `sportpredict/backend/main.py` CORS `allow_origins` with your Vercel URL.
 
 ### CI/CD (GitHub Actions)
@@ -169,7 +183,10 @@ npm run open:android       # open Android Studio
 | GET | `/` | Health check |
 | GET | `/api/sports/predict` | Match predictions |
 | GET | `/api/sports/matches` | Upcoming matches |
+| POST | `/api/sports/insight` | AI commentary for a match prediction |
 | POST | `/api/lottery/generate` | Generate lottery grid |
+| POST | `/api/lottery/insight` | AI commentary for a lottery grid |
+| POST | `/api/notifications/resolve-predictions` | Manually trigger result resolution + push notifications |
 
 Full docs available at `/docs` when the backend is running.
 
@@ -186,6 +203,8 @@ Full docs available at `/docs` when the backend is running.
 | Database | Supabase (PostgreSQL + Row Level Security) |
 | Backend | FastAPI + uvicorn |
 | ML model | XGBoost + scikit-learn |
+| AI insights | Anthropic Claude (claude-haiku-4-5) |
+| Notifications | Web Push (VAPID) + service worker |
 | Mobile | Capacitor 8 (Android) |
 | Frontend hosting | Vercel |
 | Backend hosting | Railway |

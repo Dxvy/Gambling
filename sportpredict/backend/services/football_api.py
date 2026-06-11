@@ -7,7 +7,7 @@ All endpoints require the RapidAPI key in the request headers.
 
 import os
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from dotenv import load_dotenv
@@ -299,6 +299,56 @@ async def get_standings(league_id: str, season: int = 2024) -> list[dict]:
         }
         for row in table
     ]
+
+
+async def get_match_result(
+    competition_code: str,
+    home_team: str,
+    away_team: str,
+    match_date: str,
+) -> Literal["HOME", "DRAW", "AWAY"] | None:
+    """
+    Look up the result of a finished match by team name on a given date.
+
+    ``match_date`` is the ISO date(time) string stored on the prediction
+    (only the first 10 chars — YYYY-MM-DD — are used to scope the lookup).
+    Team names are matched case-insensitively by substring, the same approach
+    ``find_match_odds`` uses in odds_api.py, since team names can differ
+    slightly between data sources.
+
+    Returns ``None`` if no finished match is found yet (the fixture hasn't
+    been played, or the league/date doesn't match).
+    """
+    date_only = match_date[:10]
+    logger.info(
+        "Looking up result — competition=%s date=%s %s vs %s",
+        competition_code, date_only, home_team, away_team,
+    )
+    body = await _get(
+        f"/competitions/{competition_code}/matches",
+        params={"status": "FINISHED", "dateFrom": date_only, "dateTo": date_only},
+    )
+    matches = body.get("matches", [])
+
+    home_lower = home_team.lower()
+    away_lower = away_team.lower()
+
+    for m in matches:
+        m_home = m.get("homeTeam", {}).get("name", "").lower()
+        m_away = m.get("awayTeam", {}).get("name", "").lower()
+
+        if (home_lower in m_home or m_home in home_lower) and \
+           (away_lower in m_away or m_away in away_lower):
+            winner = m.get("score", {}).get("winner")
+            if winner == "HOME_TEAM":
+                return "HOME"
+            if winner == "AWAY_TEAM":
+                return "AWAY"
+            if winner == "DRAW":
+                return "DRAW"
+            return None
+
+    return None
 
 
 async def get_team_recent_form(team_id: int, last: int = 5) -> list[dict]:

@@ -13,9 +13,10 @@ the hot/cold numbers are consistent across server restarts).  Replace
 scraper.
 
 Endpoints:
-  GET /api/lottery/config/{lottery}   → LotteryConfigResponse
-  GET /api/lottery/hot-cold/{lottery} → HotColdResponse
-  GET /api/lottery/suggest/{lottery}  → SuggestionResponse
+  GET  /api/lottery/config/{lottery}   → LotteryConfigResponse
+  GET  /api/lottery/hot-cold/{lottery} → HotColdResponse
+  GET  /api/lottery/suggest/{lottery}  → SuggestionResponse
+  POST /api/lottery/insight            → AI commentary for a generated grid
 """
 
 from __future__ import annotations
@@ -27,6 +28,8 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+
+from services.ai_insight import AIInsightError, InsightResponse, generate_lottery_insight
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -166,6 +169,13 @@ class SuggestionResponse(BaseModel):
     lottery:  str
     numbers:  list[int] = Field(description="Suggested main numbers, sorted ascending")
     bonus:    list[int] = Field(description="Suggested bonus numbers (0, 1, or 2 items)")
+    strategy: str
+
+
+class LotteryInsightRequest(BaseModel):
+    lottery:  str
+    numbers:  list[int]
+    bonus:    list[int] = []
     strategy: str
 
 
@@ -349,3 +359,18 @@ def suggest_numbers(
         )
 
     return SuggestionResponse(lottery=lottery, numbers=numbers, bonus=bonus, strategy=strategy)
+
+
+@router.post(
+    "/insight",
+    response_model=InsightResponse,
+    summary="Generate AI commentary for a lottery grid",
+)
+async def lottery_insight(payload: LotteryInsightRequest) -> InsightResponse:
+    """Ask Claude for a short, lighthearted comment about a generated grid."""
+    try:
+        text = await generate_lottery_insight(**payload.model_dump())
+    except AIInsightError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return InsightResponse(insight=text)

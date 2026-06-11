@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import PushNotificationToggle from "@/components/PushNotificationToggle";
 
 type UserInfo = { email?: string; avatarUrl?: string };
 
@@ -94,6 +95,7 @@ export default function NavUser() {
           <p className="truncate border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
             {user.email}
           </p>
+          <PushNotificationToggle />
           <button
             onClick={logout}
             className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-muted"

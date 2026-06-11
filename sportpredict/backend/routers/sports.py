@@ -8,6 +8,7 @@ GET  /api/sports/fixtures                      Upcoming fixtures for a league
 GET  /api/sports/predict                       Predict the outcome of one match
 GET  /api/sports/predict/batch                 Predict all fixtures in a league
 GET  /api/sports/value-bets/{league_id}        Fixtures with value bet detection
+POST /api/sports/insight                       AI-generated insight for a prediction
 POST /api/sports/reload-model                  Hot-reload the ML model from disk
 """
 
@@ -20,6 +21,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from services.ai_insight import AIInsightError, InsightResponse, generate_match_insight
 from services.football_api import APIFootballError, get_fixtures, get_standings
 from services.odds_api import (
     OddsAPIError,
@@ -85,6 +87,21 @@ class ValueBetResponse(BaseModel):
 class ReloadResponse(BaseModel):
     success: bool
     message: str
+
+
+class MatchInsightRequest(BaseModel):
+    home_team: str
+    away_team: str
+    league: str
+    home_prob: float
+    draw_prob: float
+    away_prob: float
+    prediction: Literal["HOME", "DRAW", "AWAY"]
+    confidence: int
+    home_form: str = ""
+    away_form: str = ""
+    is_value_bet: bool = False
+    edge: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +388,25 @@ async def value_bets(
     # Sort by edge descending — highest value first
     results.sort(key=lambda x: x.edge, reverse=True)
     return results
+
+
+@router.post(
+    "/insight",
+    response_model=InsightResponse,
+    summary="Generate an AI insight for a match prediction",
+)
+async def match_insight(payload: MatchInsightRequest) -> InsightResponse:
+    """
+    Ask Claude for a short, human-readable take on why the model favors its
+    predicted outcome, given the probabilities, form, and value bet info
+    already computed by the prediction endpoints.
+    """
+    try:
+        text = await generate_match_insight(**payload.model_dump())
+    except AIInsightError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return InsightResponse(insight=text)
 
 
 @router.post(

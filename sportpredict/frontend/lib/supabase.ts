@@ -40,3 +40,21 @@ export async function saveLotteryGrid(
     user_id: user.user.id,
   });
 }
+
+export async function savePushSubscription(subscription: PushSubscriptionJSON) {
+  const { data: user } = await supabase.auth.getUser();
+  if (!user.user || !subscription.endpoint || !subscription.keys) return;
+  return supabase.from("push_subscriptions").upsert(
+    {
+      user_id:  user.user.id,
+      endpoint: subscription.endpoint,
+      p256dh:   subscription.keys.p256dh,
+      auth:     subscription.keys.auth,
+    },
+    { onConflict: "endpoint" },
+  );
+}
+
+export async function deletePushSubscription(endpoint: string) {
+  return supabase.from("push_subscriptions").delete().eq("endpoint", endpoint);
+}
