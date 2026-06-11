@@ -59,6 +59,9 @@ jobs:
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_API_BASE_URL }}
 
       - name: Deploy
         working-directory: sportpredict/frontend
@@ -68,18 +71,18 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
   # ── Backend → Railway ──────────────────────────────────────────────────────
-  deploy-backend:
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm install --global @railway/cli
-
-      - name: Deploy to Railway
-        working-directory: sportpredict/backend
-        run: railway up --detach --service backend --project ${{ secrets.RAILWAY_PROJECT_ID }} --environment production
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+#  deploy-backend:
+#    needs: changes
+#    if: needs.changes.outputs.backend == 'true'
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v4
+#
+#      - name: Install Railway CLI
+#        run: npm install --global @railway/cli
+#
+#      - name: Deploy to Railway
+#        working-directory: sportpredict/backend
+#        run: railway up --detach --service backend --project ${{ secrets.RAILWAY_PROJECT_ID }} --environment production
+#        env:
+#          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
