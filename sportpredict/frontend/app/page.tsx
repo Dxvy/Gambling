@@ -1,3 +1,5 @@
+// app/page.tsx
+// Temporary landing page — replace with redirect once /sports is built
 import Link from "next/link";
 
 export default function Home() {
