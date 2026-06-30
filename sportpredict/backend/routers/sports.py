@@ -56,6 +56,8 @@ class FixtureResponse(BaseModel):
 
 
 class PredictionResponse(BaseModel):
+    fixture_id: int | None = None
+    date: str = ""
     home_team: str
     away_team: str
     league_id: str
@@ -300,6 +302,8 @@ async def predict_batch(
             result     = annotate_with_value_bets(result, match_odds)
 
         return PredictionResponse(
+            fixture_id    = fixture.get("id"),
+            date          = fixture.get("date", ""),
             home_team     = home_name,
             away_team     = away_name,
             league_id     = league.get("id", league_id),

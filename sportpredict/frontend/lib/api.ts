@@ -2,12 +2,46 @@ import type { Match } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
-export async function fetchFixtures(leagueId: number, season = 2024) {
+export async function fetchFixtures(leagueId: string, nextN = 10) {
   const res = await fetch(
-    `${BASE}/api/sports/fixtures?league_id=${leagueId}&season=${season}`
+    `${BASE}/api/sports/fixtures?league_id=${leagueId}&next_n=${nextN}`
   );
   if (!res.ok) throw new Error("Failed to fetch fixtures");
   return res.json();
+}
+
+function formatMatchDate(iso: string): string {
+  const d = new Date(iso);
+  return (
+    d.toLocaleDateString("en-GB", { day: "numeric", month: "short" }) +
+    " " +
+    d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+  );
+}
+
+export async function fetchPredictBatch(leagueId: string, nextN = 10): Promise<Match[]> {
+  const res = await fetch(
+    `${BASE}/api/sports/predict/batch?league_id=${leagueId}&next_n=${nextN}`
+  );
+  if (!res.ok) throw new Error("Failed to fetch predictions");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data: any[] = await res.json();
+  return data.map((item, i) => ({
+    id: item.fixture_id != null ? String(item.fixture_id) : String(i),
+    homeTeam: item.home_team,
+    awayTeam: item.away_team,
+    homeProb: Math.round(item.home_prob),
+    drawProb: Math.round(item.draw_prob),
+    awayProb: Math.round(item.away_prob),
+    prediction: item.prediction,
+    confidence: item.confidence,
+    isValueBet: item.is_value_bet,
+    matchDate: item.date ? formatMatchDate(item.date) : "",
+    league: item.league_id,
+    leagueId: item.league_id,
+    homeForm: "",
+    awayForm: "",
+  }));
 }
 
 export async function predictMatch(

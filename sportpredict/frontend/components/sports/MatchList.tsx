@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import MatchCard from "@/components/sports/MatchCard";
 import { Skeleton } from "@/components/ui/skeleton";
-import { mockMatches } from "@/lib/mock-data";
+import { fetchPredictBatch } from "@/lib/api";
+import type { Match } from "@/lib/types";
 
 interface MatchListProps {
   sport: string;
@@ -39,13 +40,24 @@ function MatchCardSkeleton() {
 }
 
 export default function MatchList({ sport, leagueId }: MatchListProps) {
-  const matches = useMemo(() => {
-    // Football is the only sport with mock data; other sports show empty state
-    if (sport !== "football") return [];
-    if (leagueId !== null) {
-      return mockMatches.filter((m) => m.leagueId === leagueId);
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (sport !== "football" || !leagueId) {
+      setMatches([]);
+      return;
     }
-    return mockMatches;
+
+    let cancelled = false;
+    setLoading(true);
+
+    fetchPredictBatch(leagueId)
+      .then((data) => { if (!cancelled) setMatches(data); })
+      .catch(() => { if (!cancelled) setMatches([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
   }, [sport, leagueId]);
 
   if (sport !== "football") {
@@ -55,6 +67,25 @@ export default function MatchList({ sport, leagueId }: MatchListProps) {
         <p className="text-sm">
           {sport.charAt(0).toUpperCase() + sport.slice(1)} predictions coming soon.
         </p>
+      </div>
+    );
+  }
+
+  if (!leagueId) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-2 text-muted-foreground">
+        <span className="text-3xl">👈</span>
+        <p className="text-sm">Select a league to see upcoming matches.</p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <MatchCardSkeleton key={i} />
+        ))}
       </div>
     );
   }
