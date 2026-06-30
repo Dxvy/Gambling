@@ -266,9 +266,14 @@ async def get_fixtures(league_id: str, season: int | None = None, next_n: int = 
     logger.info("Fetching fixtures — competition=%s season=%d", league_id, resolved_season)
     body = await _get(
         f"/competitions/{league_id}/matches",
-        params={"status": "SCHEDULED", "season": resolved_season},
+        # "TIMED" = kick-off time confirmed (most upcoming matches during live tournaments)
+        # "SCHEDULED" = date known but time not yet set (used early in scheduling cycle)
+        params={"status": "SCHEDULED,TIMED", "season": resolved_season},
     )
-    matches = body.get("matches", [])[:next_n]
+    matches = sorted(
+        body.get("matches", []),
+        key=lambda m: m.get("utcDate", ""),
+    )[:next_n]
     comp_name = body.get("competition", {}).get("name", "")
     return [_normalize_match(m, comp_name) for m in matches]
 
