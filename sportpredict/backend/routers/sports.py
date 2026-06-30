@@ -30,6 +30,7 @@ from services.odds_api import (
     get_league_odds,
 )
 from services.prediction import predict_match, reload_model
+from services.football_api import resolve_season  # add alongside the existing football_api imports
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,7 +49,7 @@ class FixtureResponse(BaseModel):
     home_team: TeamInfo
     away_team: TeamInfo
     league: str
-    league_id: int
+    league_id: str
     date: str
     status: str
     venue: str | None = None
@@ -57,7 +58,7 @@ class FixtureResponse(BaseModel):
 class PredictionResponse(BaseModel):
     home_team: str
     away_team: str
-    league_id: int
+    league_id: str
     home_prob: float
     draw_prob: float
     away_prob: float
@@ -150,13 +151,16 @@ async def list_leagues() -> dict[str, list[dict]]:
     from ml.features import FEATURE_COLS  # noqa: F401 (confirm import works)
 
     leagues: dict[str, list[dict]] = {
-        "France":   [{"id": 61, "name": "Ligue 1"},        {"id": 62, "name": "Ligue 2"}],
-        "England":  [{"id": 39, "name": "Premier League"},  {"id": 40, "name": "Championship"}],
-        "Spain":    [{"id": 140, "name": "La Liga"},         {"id": 141, "name": "La Liga 2"}],
-        "Germany":  [{"id": 78, "name": "Bundesliga"},       {"id": 79, "name": "2. Bundesliga"}],
-        "Italy":    [{"id": 135, "name": "Serie A"},          {"id": 136, "name": "Serie B"}],
-        "Champions":[{"id": 2,  "name": "Champions League"}],
-        "Europa":   [{"id": 3,  "name": "Europa League"}],
+        "France":       [{"id": "FL1",  "name": "Ligue 1"}],
+        "England":      [{"id": "PL",   "name": "Premier League"}, {"id": "ELC", "name": "Championship"}],
+        "Spain":        [{"id": "PD",   "name": "La Liga"}],
+        "Germany":      [{"id": "BL1",  "name": "Bundesliga"}],
+        "Italy":        [{"id": "SA",   "name": "Serie A"}],
+        "Portugal":     [{"id": "PPL",  "name": "Primeira Liga"}],
+        "Netherlands":  [{"id": "DED",  "name": "Eredivisie"}],
+        "Brazil":       [{"id": "BSA",  "name": "Série A"}],
+        "Europe":       [{"id": "CL",   "name": "Champions League"}, {"id": "EC", "name": "European Championship"}],
+        "World":        [{"id": "WC",   "name": "FIFA World Cup"}],
     }
     return leagues
 
@@ -167,13 +171,13 @@ async def list_leagues() -> dict[str, list[dict]]:
     summary="Upcoming fixtures for a league",
 )
 async def fixtures(
-    league_id: int = Query(..., description="API-Football league ID, e.g. 39 for EPL"),
-    season:    int = Query(2024, description="Season year, e.g. 2024"),
-    next_n:    int = Query(10,  ge=1, le=20, description="Number of upcoming fixtures to return"),
+        league_id: str = Query(..., description="football-data.org competition code, e.g. PL"),
+        season:    int | None = Query(None, description="Season year. Auto-resolved if omitted (handles WC/EC automatically)."),
+        next_n:    int = Query(10, ge=1, le=20, description="Number of upcoming fixtures to return"),
 ) -> list[FixtureResponse]:
     """
     Return the next N scheduled fixtures for a competition.
-    Data is fetched live from API-Football — one request per call.
+    Data is fetched live from football-data.org — one request per call.
     """
     try:
         raw_fixtures = await get_fixtures(league_id, season, next_n)
@@ -189,35 +193,35 @@ async def fixtures(
     summary="Predict the outcome of one match",
 )
 async def predict(
-    home_id:   int = Query(..., description="API-Football team ID for the home team"),
-    away_id:   int = Query(..., description="API-Football team ID for the away team"),
-    league_id: int = Query(..., description="API-Football league ID"),
-    season:    int = Query(2024),
-    with_odds: bool = Query(False, description="Fetch bookmaker odds and detect value bets"),
-    home_name: str = Query("", description="Home team name (required if with_odds=true)"),
-    away_name: str = Query("", description="Away team name (required if with_odds=true)"),
+        home_id:   int = Query(..., description="Team ID for the home team"),
+        away_id:   int = Query(..., description="Team ID for the away team"),
+        league_id: str = Query(..., description="football-data.org competition code"),
+        season:    int | None = Query(None, description="Season year. Auto-resolved if omitted."),
+        with_odds: bool = Query(False, description="Fetch bookmaker odds and detect value bets"),
+        home_name: str = Query("", description="Home team name (required if with_odds=true)"),
+        away_name: str = Query("", description="Away team name (required if with_odds=true)"),
 ) -> PredictionResponse:
     """
     Predict a single match.
 
-    1. Fetches team stats and H2H data concurrently from API-Football.
+    1. Fetches team stats and H2H data concurrently from football-data.org.
     2. Builds the feature vector.
     3. Runs the XGBoost model (or rule-based fallback).
     4. Optionally fetches bookmaker odds and annotates the value bet edge.
     """
+    resolved_season = season if season is not None else resolve_season(league_id)
+
     try:
-        result = await predict_match(home_id, away_id, league_id, season)
+        result = await predict_match(home_id, away_id, league_id, resolved_season)
     except APIFootballError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    # Optionally enrich with bookmaker odds
     if with_odds and home_name and away_name:
         try:
             odds_list   = await get_league_odds(league_id)
             match_odds  = find_match_odds(odds_list, home_name, away_name)
             result      = annotate_with_value_bets(result, match_odds)
         except OddsAPIError as exc:
-            # Odds failure is non-fatal — return prediction without value bet info
             logger.warning("Odds API error (non-fatal): %s", exc)
 
     return PredictionResponse(
@@ -233,7 +237,6 @@ async def predict(
         bookmaker_odds= result.get("bookmaker_odds"),
         edge          = result.get("edge"),
         model_used    = result["model_used"],
-        features      = result.get("features", {}),
     )
 
 
@@ -243,10 +246,10 @@ async def predict(
     summary="Predict all upcoming fixtures in a league",
 )
 async def predict_batch(
-    league_id:  int  = Query(..., description="API-Football league ID"),
-    season:     int  = Query(2024),
-    next_n:     int  = Query(10, ge=1, le=20),
-    with_odds:  bool = Query(False, description="Annotate value bets from bookmaker odds"),
+        league_id:  str  = Query(..., description="football-data.org competition code, e.g. PL"),
+        season:     int | None = Query(None, description="Season year. Auto-resolved if omitted (handles WC/EC automatically)."),
+        next_n:     int  = Query(10, ge=1, le=20),
+        with_odds:  bool = Query(False, description="Annotate value bets from bookmaker odds"),
 ) -> list[PredictionResponse]:
     """
     Fetch upcoming fixtures and predict all of them.
@@ -255,8 +258,10 @@ async def predict_batch(
     possible.  Failures on individual matches are logged and skipped rather
     than aborting the whole batch.
     """
+    resolved_season = season if season is not None else resolve_season(league_id)
+
     try:
-        raw_fixtures = await get_fixtures(league_id, season, next_n)
+        raw_fixtures = await get_fixtures(league_id, resolved_season, next_n)
     except APIFootballError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -284,7 +289,7 @@ async def predict_batch(
             return None
 
         try:
-            result = await predict_match(home_id, away_id, league_id, season)
+            result = await predict_match(home_id, away_id, league_id, resolved_season)
         except (APIFootballError, Exception) as exc:  # noqa: BLE001
             logger.warning("Skipping fixture %s — prediction failed: %s",
                            fixture.get("id"), exc)
@@ -309,9 +314,7 @@ async def predict_batch(
             model_used    = result["model_used"],
         )
 
-    # Predict all fixtures concurrently — each call already uses gather() internally
     predictions = await asyncio.gather(*[_predict_one(f) for f in raw_fixtures])
-    # Filter out None values (skipped fixtures)
     return [p for p in predictions if p is not None]
 
 
@@ -321,11 +324,11 @@ async def predict_batch(
     summary="Return only matches with a positive value bet edge",
 )
 async def value_bets(
-    league_id: int,
-    season:    int   = Query(2024),
-    next_n:    int   = Query(10, ge=1, le=20),
-    threshold: float = Query(0.05, ge=0.01, le=0.30,
-                             description="Minimum edge (fraction) to qualify as value bet"),
+        league_id: str,
+        season:    int | None = Query(None, description="Season year. Auto-resolved if omitted (handles WC/EC automatically)."),
+        next_n:    int   = Query(10, ge=1, le=20),
+        threshold: float = Query(0.05, ge=0.01, le=0.30,
+                                 description="Minimum edge (fraction) to qualify as value bet"),
 ) -> list[ValueBetResponse]:
     """
     Predict upcoming fixtures and return only those with a value bet edge
@@ -334,8 +337,10 @@ async def value_bets(
     Requires a valid ODDS_API_KEY in the environment — returns an empty list
     if the odds fetch fails.
     """
+    resolved_season = season if season is not None else resolve_season(league_id)
+
     try:
-        raw_fixtures = await get_fixtures(league_id, season, next_n)
+        raw_fixtures = await get_fixtures(league_id, resolved_season, next_n)
     except APIFootballError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -362,7 +367,7 @@ async def value_bets(
             continue
 
         try:
-            pred = await predict_match(home_id, away_id, league_id, season)
+            pred = await predict_match(home_id, away_id, league_id, resolved_season)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Prediction failed for %s vs %s: %s", home_name, away_name, exc)
             continue
@@ -385,7 +390,6 @@ async def value_bets(
                 model_used     = annotated["model_used"],
             ))
 
-    # Sort by edge descending — highest value first
     results.sort(key=lambda x: x.edge, reverse=True)
     return results
 

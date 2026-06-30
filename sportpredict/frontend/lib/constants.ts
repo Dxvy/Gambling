@@ -7,12 +7,16 @@ export const sportsList = [
   { id: "baseball", icon: "⚾", label: "Baseball", apiId: 6 },
 ];
 
-// Replace numeric IDs with football-data.org competition codes
+// Leagues by country mapping
 export const leaguesByCountry = {
   "France":    [{ id: "FL1",  name: "Ligue 1" }],
-  "England":   [{ id: "PL",   name: "Premier League" }],
+  "England":   [{ id: "PL",   name: "Premier League" }, { id: "ELC", name: "Championship" }],
   "Spain":     [{ id: "PD",   name: "La Liga" }],
   "Germany":   [{ id: "BL1",  name: "Bundesliga" }],
   "Italy":     [{ id: "SA",   name: "Serie A" }],
-  "Champions": [{ id: "CL",   name: "Champions League" }],
+  "Portugal":  [{ id: "PPL",  name: "Primeira Liga" }],
+  "Netherlands": [{ id: "DED", name: "Eredivisie" }],
+  "Brazil":    [{ id: "BSA",  name: "Série A" }],
+  "Europe":    [{ id: "CL",   name: "Champions League" }, { id: "EC", name: "European Championship" }],
+  "World":     [{ id: "WC",   name: "FIFA World Cup" }],
 };

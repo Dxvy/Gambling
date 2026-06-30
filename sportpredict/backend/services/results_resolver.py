@@ -22,13 +22,20 @@ logger = logging.getLogger(__name__)
 # competition codes. Only the leagues available on the free tier are listed —
 # others (Ligue 2, La Liga 2, 2. Bundesliga, Serie B, Europa League) are skipped.
 LEAGUE_NAME_TO_FD_CODE: dict[str, str] = {
-    "Premier League":   "PL",
-    "Championship":     "ELC",
-    "La Liga":          "PD",
-    "Bundesliga":       "BL1",
-    "Serie A":          "SA",
-    "Ligue 1":          "FL1",
-    "Champions League": "CL",
+    # Domestic leagues
+    "Ligue 1":                  "FL1",
+    "Premier League":           "PL",
+    "Championship":             "ELC",
+    "La Liga":                  "PD",
+    "Bundesliga":               "BL1",
+    "Serie A":                  "SA",
+    "Primeira Liga":            "PPL",
+    "Eredivisie":               "DED",
+    "Série A":                  "BSA",   # Brazil
+    # International
+    "Champions League":         "CL",
+    "European Championship":    "EC",
+    "FIFA World Cup":           "WC",
 }
 
 # football-data.org free tier allows 10 requests/minute.

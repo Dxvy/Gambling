@@ -6,13 +6,16 @@ import { leaguesByCountry } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 const COUNTRY_FLAGS: Record<string, string> = {
-  France: "🇫🇷",
-  England: "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
-  Spain: "🇪🇸",
-  Germany: "🇩🇪",
-  Italy: "🇮🇹",
-  Champions: "🏆",
-  Europa: "🌍",
+  France:       "🇫🇷",
+  England:      "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
+  Spain:        "🇪🇸",
+  Germany:      "🇩🇪",
+  Italy:        "🇮🇹",
+  Portugal:     "🇵🇹",
+  Netherlands:  "🇳🇱",
+  Brazil:       "🇧🇷",
+  Europe:       "🏆",
+  World:        "🌍",
 };
 
 interface LeagueSidebarProps {

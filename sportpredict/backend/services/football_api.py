@@ -12,6 +12,8 @@ from typing import Any, Literal
 import httpx
 from dotenv import load_dotenv
 
+from datetime import datetime, timezone
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,51 @@ _HEADERS = {
     "X-Auth-Token": _API_KEY,
 }
 
+# ---------------------------------------------------------------------------
+# Season auto-resolution
+# ---------------------------------------------------------------------------
+# Domestic leagues run on a single-year "season" label that starts mid-year
+# (e.g. season=2024 covers Aug 2024 -> May 2025), so the correct value is
+# simply "current year, or last year if we're before the new season kicks
+# off in July". International tournaments (World Cup, Euro) are different:
+# they're one-off summer events, only happen on fixed multi-year cycles, and
+# football-data.org expects the *year the tournament is played in*, not a
+# season span. Hardcoding the next known edition per competition avoids
+# silently querying the wrong year (or a year with no data at all) for cups
+# that aren't running every season like the domestic leagues are.
+
+# Competition codes that follow the "one tournament every few years" pattern,
+# mapped to the year of their next/current edition. Update these once each
+# cycle is announced — there's no reliable way to compute them from a formula.
+_FIXED_EDITION_YEARS: dict[str, int] = {
+    "WC": 2026,  # FIFA World Cup — next edition: USA/Canada/Mexico 2026
+    "EC": 2024,  # UEFA European Championship — most recent edition: Germany 2024
+}
+
+# Month (1-12) after which a domestic league's new season is considered to
+# have started. Before July, "this season" still refers to last year's label.
+_DOMESTIC_SEASON_ROLLOVER_MONTH = 7
+
+
+def resolve_season(competition_code: str, today: datetime | None = None) -> int:
+    """
+    Return the football-data.org ``season`` value to use for a competition,
+    without the caller needing to know whether it's a domestic league or an
+    international tournament.
+
+    - Fixed-edition competitions (World Cup, Euro) always return their known
+      edition year from ``_FIXED_EDITION_YEARS``, regardless of today's date.
+    - Domestic leagues return the current year, or the previous year if
+      today's date falls before the new season's rollover month (since the
+      league season spans two calendar years).
+    """
+    if competition_code in _FIXED_EDITION_YEARS:
+        return _FIXED_EDITION_YEARS[competition_code]
+
+    now = today or datetime.now(timezone.utc)
+    if now.month < _DOMESTIC_SEASON_ROLLOVER_MONTH:
+        return now.year - 1
+    return now.year
 
 class APIFootballError(Exception):
     """Raised when the API returns an unexpected status or an error payload."""
@@ -196,7 +243,7 @@ def _compute_team_stats(team_id: int, matches: list[dict], league_name: str) -> 
 # (except league_id is now str, e.g. "PL" instead of 39)
 # ---------------------------------------------------------------------------
 
-async def get_fixtures(league_id: str, season: int = 2024, next_n: int = 10) -> list[dict]:
+async def get_fixtures(league_id: str, season: int | None = None, next_n: int = 10) -> list[dict]:
     """
     Return the next ``next_n`` upcoming fixtures for a given competition.
 
@@ -204,21 +251,28 @@ async def get_fixtures(league_id: str, season: int = 2024, next_n: int = 10) -> 
       "PL"  = Premier League       "FL1" = Ligue 1
       "PD"  = La Liga              "BL1" = Bundesliga
       "SA"  = Serie A              "CL"  = Champions League
+      "WC"  = FIFA World Cup       "EC"  = European Championship
+
+    If ``season`` is not provided, it's resolved automatically based on the
+    competition: domestic leagues use the current season year, while
+    tournaments like the World Cup or Euro use their known edition year
+    (see ``resolve_season``). Pass it explicitly to override this — e.g. to
+    pull historical seasons for analysis.
 
     Output shape is identical to the old API-Football wrapper so the router
     and any consumers never need to change.
     """
-    logger.info("Fetching fixtures — competition=%s season=%d", league_id, season)
+    resolved_season = season if season is not None else resolve_season(league_id)
+    logger.info("Fetching fixtures — competition=%s season=%d", league_id, resolved_season)
     body = await _get(
         f"/competitions/{league_id}/matches",
-        params={"status": "SCHEDULED", "season": season},
+        params={"status": "SCHEDULED", "season": resolved_season},
     )
     matches = body.get("matches", [])[:next_n]
     comp_name = body.get("competition", {}).get("name", "")
     return [_normalize_match(m, comp_name) for m in matches]
 
-
-async def get_team_stats(team_id: int, league_id: str, season: int = 2024) -> dict:
+async def get_team_stats(team_id: int, league_id: str, season: int | None = None) -> dict:
     """
     Return aggregate statistics for one team in one competition season.
 
@@ -266,7 +320,7 @@ async def get_head_to_head(team1_id: int, team2_id: int, last: int = 10) -> list
     return [_normalize_match(m) for m in h2h]
 
 
-async def get_standings(league_id: str, season: int = 2024) -> list[dict]:
+async def get_standings(league_id: str, season: int | None = None) -> list[dict]:
     """
     Return the league table for a given competition.
 
