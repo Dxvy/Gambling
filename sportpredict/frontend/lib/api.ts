@@ -44,6 +44,31 @@ export async function fetchPredictBatch(leagueId: string, nextN = 10): Promise<M
   }));
 }
 
+export async function fetchUpcomingFixtures(leagueId: string, nextN = 10): Promise<Match[]> {
+  const res = await fetch(
+    `${BASE}/api/sports/fixtures?league_id=${leagueId}&next_n=${nextN}`
+  );
+  if (!res.ok) throw new Error("Failed to fetch fixtures");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data: any[] = await res.json();
+  return data.map((item, i) => ({
+    id: item.fixture_id != null ? String(item.fixture_id) : String(i),
+    homeTeam: item.home_team.name,
+    awayTeam: item.away_team.name,
+    homeProb: 0,
+    drawProb: 0,
+    awayProb: 0,
+    prediction: "HOME" as const,
+    confidence: 0,
+    isValueBet: false,
+    matchDate: item.date ? formatMatchDate(item.date) : "",
+    league: item.league,
+    leagueId: item.league_id,
+    homeForm: "",
+    awayForm: "",
+  }));
+}
+
 export async function predictMatch(
   homeId: number,
   awayId: number,

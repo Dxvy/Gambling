@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import MatchCard from "@/components/sports/MatchCard";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchPredictBatch } from "@/lib/api";
+import { fetchUpcomingFixtures } from "@/lib/api";
 import type { Match } from "@/lib/types";
 
 interface MatchListProps {
@@ -52,7 +52,7 @@ export default function MatchList({ sport, leagueId }: MatchListProps) {
     let cancelled = false;
     setLoading(true);
 
-    fetchPredictBatch(leagueId)
+    fetchUpcomingFixtures(leagueId)
       .then((data) => { if (!cancelled) setMatches(data); })
       .catch(() => { if (!cancelled) setMatches([]); })
       .finally(() => { if (!cancelled) setLoading(false); });

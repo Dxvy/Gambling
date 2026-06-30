@@ -153,28 +153,34 @@ export default function MatchCard({
         </div>
 
         {/* Outcome probability buttons */}
-        <div className="grid grid-cols-3 gap-1.5">
-          {OUTCOMES.map((outcome) => {
-            const isActive = prediction === outcome;
-            return (
-              <div
-                key={outcome}
-                className={cn(
-                  "rounded-lg px-2 py-2 text-center transition-colors",
-                  isActive
-                    ? "bg-blue-600 text-white"
-                    : "bg-muted text-muted-foreground",
-                )}
-              >
-                <div className="text-sm font-bold tabular-nums">{probs[outcome]}%</div>
-                <div className="mt-0.5 text-[10px] font-medium">{OUTCOME_LABELS[outcome]}</div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Confidence bar */}
-        <ConfidenceBar value={confidence} />
+        {confidence > 0 ? (
+          <>
+            <div className="grid grid-cols-3 gap-1.5">
+              {OUTCOMES.map((outcome) => {
+                const isActive = prediction === outcome;
+                return (
+                  <div
+                    key={outcome}
+                    className={cn(
+                      "rounded-lg px-2 py-2 text-center transition-colors",
+                      isActive
+                        ? "bg-blue-600 text-white"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    <div className="text-sm font-bold tabular-nums">{probs[outcome]}%</div>
+                    <div className="mt-0.5 text-[10px] font-medium">{OUTCOME_LABELS[outcome]}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <ConfidenceBar value={confidence} />
+          </>
+        ) : (
+          <div className="rounded-lg bg-muted px-3 py-2.5 text-center text-xs text-muted-foreground">
+            Prediction not yet available
+          </div>
+        )}
 
         {/* Save / AI Insight buttons */}
         <div className="flex items-center gap-2 pt-0.5">
