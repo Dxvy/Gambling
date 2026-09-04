@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import MatchCard from "@/components/sports/MatchCard";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchUpcomingFixtures } from "@/lib/api";
+import { fetchAllFixtures, fetchUpcomingFixtures } from "@/lib/api";
 import type { Match } from "@/lib/types";
 
 interface MatchListProps {
@@ -44,7 +44,7 @@ export default function MatchList({ sport, leagueId }: MatchListProps) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (sport !== "football" || !leagueId) {
+    if (sport !== "football") {
       setMatches([]);
       return;
     }
@@ -52,7 +52,9 @@ export default function MatchList({ sport, leagueId }: MatchListProps) {
     let cancelled = false;
     setLoading(true);
 
-    fetchUpcomingFixtures(leagueId)
+    const request = leagueId ? fetchUpcomingFixtures(leagueId) : fetchAllFixtures();
+
+    request
       .then((data) => { if (!cancelled) setMatches(data); })
       .catch(() => { if (!cancelled) setMatches([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -71,15 +73,6 @@ export default function MatchList({ sport, leagueId }: MatchListProps) {
     );
   }
 
-  if (!leagueId) {
-    return (
-      <div className="flex h-64 flex-col items-center justify-center gap-2 text-muted-foreground">
-        <span className="text-3xl">👈</span>
-        <p className="text-sm">Select a league to see upcoming matches.</p>
-      </div>
-    );
-  }
-
   if (loading) {
     return (
       <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -94,7 +87,9 @@ export default function MatchList({ sport, leagueId }: MatchListProps) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2 text-muted-foreground">
         <span className="text-3xl">📭</span>
-        <p className="text-sm">No upcoming matches for this league.</p>
+        <p className="text-sm">
+          {leagueId ? "No upcoming matches for this league." : "No upcoming matches right now."}
+        </p>
       </div>
     );
   }

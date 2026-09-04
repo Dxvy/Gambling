@@ -44,14 +44,9 @@ export async function fetchPredictBatch(leagueId: string, nextN = 10): Promise<M
   }));
 }
 
-export async function fetchUpcomingFixtures(leagueId: string, nextN = 10): Promise<Match[]> {
-  const res = await fetch(
-    `${BASE}/api/sports/fixtures?league_id=${leagueId}&next_n=${nextN}`
-  );
-  if (!res.ok) throw new Error("Failed to fetch fixtures");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const data: any[] = await res.json();
-  return data.map((item, i) => ({
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapFixture(item: any, i: number): Match {
+  return {
     id: item.fixture_id != null ? String(item.fixture_id) : String(i),
     homeTeam: item.home_team.name,
     awayTeam: item.away_team.name,
@@ -66,7 +61,26 @@ export async function fetchUpcomingFixtures(leagueId: string, nextN = 10): Promi
     leagueId: item.league_id,
     homeForm: "",
     awayForm: "",
-  }));
+  };
+}
+
+export async function fetchUpcomingFixtures(leagueId: string, nextN = 10): Promise<Match[]> {
+  const res = await fetch(
+    `${BASE}/api/sports/fixtures?league_id=${leagueId}&next_n=${nextN}`
+  );
+  if (!res.ok) throw new Error("Failed to fetch fixtures");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data: any[] = await res.json();
+  return data.map(mapFixture);
+}
+
+/** Upcoming fixtures across every supported competition, combined and sorted by date. */
+export async function fetchAllFixtures(): Promise<Match[]> {
+  const res = await fetch(`${BASE}/api/sports/fixtures/all`);
+  if (!res.ok) throw new Error("Failed to fetch fixtures");
+  const data: { fixtures: unknown[] } = await res.json();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data.fixtures as any[]).map(mapFixture);
 }
 
 export async function predictMatch(

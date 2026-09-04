@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.ai_insight import AIInsightError, InsightResponse, generate_match_insight
+from services.fixtures_aggregator import get_cached_fixtures
 from services.football_api import APIFootballError, get_fixtures, get_standings
 from services.odds_api import (
     OddsAPIError,
@@ -85,6 +86,11 @@ class ValueBetResponse(BaseModel):
     bookmaker_odds: float
     edge: float                         # % edge over implied probability
     model_used: str
+
+
+class AllFixturesResponse(BaseModel):
+    fixtures:   list[FixtureResponse]
+    updated_at: str | None = None
 
 
 class ReloadResponse(BaseModel):
@@ -187,6 +193,28 @@ async def fixtures(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return [_parse_fixture(f) for f in raw_fixtures]
+
+
+@router.get(
+    "/fixtures/all",
+    response_model=AllFixturesResponse,
+    summary="Upcoming fixtures across every supported competition",
+)
+async def all_fixtures() -> AllFixturesResponse:
+    """
+    Return the combined upcoming-fixtures list across every competition in
+    the /leagues registry, regardless of country.
+
+    Backed by a cache refreshed every 10 minutes in the background (see
+    services/fixtures_aggregator.py) rather than fetched live — fetching all
+    12 competitions per request would blow through football-data.org's
+    free-tier rate limit (10 req/min).
+    """
+    cache = get_cached_fixtures()
+    return AllFixturesResponse(
+        fixtures=[_parse_fixture(f) for f in cache["fixtures"]],
+        updated_at=cache["updated_at"],
+    )
 
 
 @router.get(
