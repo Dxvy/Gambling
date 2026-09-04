@@ -46,15 +46,18 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
+      # Run from the repo root, not sportpredict/frontend: the Vercel project's
+      # Root Directory setting (sportpredict/frontend) is now configured
+      # server-side, so the CLI already appends it to the cwd. Running these
+      # from inside sportpredict/frontend would double the path and fail with
+      # "path .../sportpredict/frontend/sportpredict/frontend does not exist".
       - name: Pull Vercel environment
-        working-directory: sportpredict/frontend
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Build
-        working-directory: sportpredict/frontend
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -64,7 +67,6 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_API_BASE_URL }}
 
       - name: Deploy
-        working-directory: sportpredict/frontend
         run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
