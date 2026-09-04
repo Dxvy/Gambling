@@ -132,7 +132,7 @@ def _parse_fixture(raw: dict) -> FixtureResponse:
             name = teams.get("away", {}).get("name", "Unknown"),
         ),
         league     = league.get("name", ""),
-        league_id  = league.get("id",   0),
+        league_id  = league.get("id",   ""),
         date       = fixture.get("date", ""),
         status     = fixture.get("status", {}).get("long", ""),
         venue      = venue.get("name") if isinstance(venue, dict) else None,

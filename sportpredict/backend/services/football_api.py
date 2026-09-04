@@ -111,7 +111,7 @@ async def _get(path: str, params: dict[str, Any] = None) -> Any:
 # ever needs to change if the upstream API evolves.
 # ---------------------------------------------------------------------------
 
-def _normalize_match(match: dict, competition_name: str = "") -> dict:
+def _normalize_match(match: dict, competition_name: str = "", competition_code: str = "") -> dict:
     """
     Convert a football-data.org match object into the API-Football fixture shape.
 
@@ -123,8 +123,12 @@ def _normalize_match(match: dict, competition_name: str = "") -> dict:
         "away": { "id": int, "name": str, "winner": bool | None }
       },
       "goals": { "home": int | None, "away": int | None },
-      "league": { "name": str }
+      "league": { "name": str, "id": str }
     }
+
+    ``league.id`` holds the football-data.org competition *code* (e.g. "PL"),
+    not football-data.org's internal numeric id — the rest of this app
+    (fixtures/predict/value-bets routes) identifies competitions by code.
     """
     score    = match.get("score", {})
     full     = score.get("fullTime", {})
@@ -155,7 +159,8 @@ def _normalize_match(match: dict, competition_name: str = "") -> dict:
         },
         "goals": { "home": home_g, "away": away_g },
         "league": {
-            "name": competition_name or match.get("competition", {}).get("name", "")
+            "name": competition_name or match.get("competition", {}).get("name", ""),
+            "id":   competition_code or match.get("competition", {}).get("code", ""),
         },
     }
 
@@ -275,7 +280,7 @@ async def get_fixtures(league_id: str, season: int | None = None, next_n: int = 
         key=lambda m: m.get("utcDate", ""),
     )[:next_n]
     comp_name = body.get("competition", {}).get("name", "")
-    return [_normalize_match(m, comp_name) for m in matches]
+    return [_normalize_match(m, comp_name, league_id) for m in matches]
 
 async def get_team_stats(team_id: int, league_id: str, season: int | None = None) -> dict:
     """
