@@ -106,8 +106,13 @@ jobs:
       - name: Install Railway CLI
         run: npm install --global @railway/cli
 
+      # Run from the repo root, not sportpredict/backend: the Railway service's
+      # Root Directory (sportpredict/backend) is configured server-side, so
+      # the platform already appends it when resolving the source. Running
+      # `railway up` from inside sportpredict/backend double-applies that
+      # root directory and fails with "Failed to read app source directory"
+      # (the same class of bug fixed for Vercel in fb61ef9 — mirrors it here).
       - name: Deploy to Railway
-        working-directory: sportpredict/backend
         run: railway up --detach --service ${{ secrets.RAILWAY_SERVICE_NAME }} --project ${{ secrets.RAILWAY_PROJECT_ID }} --environment production
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
