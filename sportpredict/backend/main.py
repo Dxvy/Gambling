@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -9,6 +10,13 @@ from routers import lottery, notifications, sports
 from services.fixtures_aggregator import refresh_all_fixtures
 from services.prediction_precompute import precompute_predictions
 from services.results_resolver import resolve_pending_predictions
+
+# Without this, the root logger stays at Python's default WARNING level and
+# every logger.info() call app-wide (fixture/prediction fetch progress,
+# rate-limiter waits, the precompute job's "wrote N predictions" summary)
+# is silently dropped — only warnings/errors ever reach Railway's log
+# stream, which made this app's background jobs impossible to verify.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 scheduler = AsyncIOScheduler()
 
