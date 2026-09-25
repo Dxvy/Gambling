@@ -24,6 +24,46 @@ export async function savePrediction(data: {
   });
 }
 
+export interface MatchPredictionRow {
+  fixture_id: number | string;
+  home_prob: number;
+  draw_prob: number;
+  away_prob: number;
+  prediction: "HOME" | "DRAW" | "AWAY";
+  confidence: number;
+  is_value_bet: boolean;
+  home_form: string;
+  away_form: string;
+  is_low_quality: boolean;
+}
+
+/**
+ * Fetch precomputed predictions for a set of fixture ids, keyed by fixture id
+ * as a string (fixture_id is bigint in Postgres and can come back as either a
+ * number or a string depending on size, while the frontend's Match.id is
+ * always a string — normalizing to string here avoids a silent join miss).
+ */
+export async function fetchPredictionsByFixtureIds(
+  fixtureIds: number[],
+): Promise<Map<string, MatchPredictionRow>> {
+  const map = new Map<string, MatchPredictionRow>();
+  if (fixtureIds.length === 0) return map;
+
+  const { data, error } = await supabase
+    .from("match_predictions")
+    .select(
+      "fixture_id, home_prob, draw_prob, away_prob, prediction, confidence, is_value_bet, home_form, away_form, is_low_quality",
+    )
+    .in("fixture_id", fixtureIds);
+
+  if (error || !data) return map;
+
+  for (const row of data as MatchPredictionRow[]) {
+    map.set(String(row.fixture_id), row);
+  }
+  return map;
+}
+
 export async function saveLotteryGrid(
   lottery: string,
   numbers: number[],

@@ -13,4 +13,5 @@ export interface Match {
   leagueId: string;
   homeForm: string;
   awayForm: string;
+  isLowQuality?: boolean;
 }

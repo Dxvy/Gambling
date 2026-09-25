@@ -71,6 +71,9 @@ class PredictionResponse(BaseModel):
     bookmaker_odds: float | None = None
     edge: float | None = None           # positive = value; expressed in %
     model_used: str
+    is_low_quality: bool = False
+    home_form: str = ""
+    away_form: str = ""
     features: dict = Field(default_factory=dict, exclude=True)
 
 
@@ -267,6 +270,9 @@ async def predict(
         bookmaker_odds= result.get("bookmaker_odds"),
         edge          = result.get("edge"),
         model_used    = result["model_used"],
+        is_low_quality= result.get("is_low_quality", False),
+        home_form     = result.get("home_form", ""),
+        away_form     = result.get("away_form", ""),
     )
 
 
@@ -344,6 +350,9 @@ async def predict_batch(
             bookmaker_odds= result.get("bookmaker_odds"),
             edge          = result.get("edge"),
             model_used    = result["model_used"],
+            is_low_quality= result.get("is_low_quality", False),
+            home_form     = result.get("home_form", ""),
+            away_form     = result.get("away_form", ""),
         )
 
     predictions = await asyncio.gather(*[_predict_one(f) for f in raw_fixtures])

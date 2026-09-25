@@ -198,7 +198,8 @@ export default function MatchCard({
           </button>
           <button
             onClick={handleInsight}
-            disabled={insightLoading}
+            disabled={insightLoading || confidence <= 0}
+            title={confidence <= 0 ? "No prediction available yet" : undefined}
             className={cn(
               "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
               "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground",

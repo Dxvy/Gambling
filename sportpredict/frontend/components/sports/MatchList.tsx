@@ -4,7 +4,40 @@ import { useEffect, useState } from "react";
 import MatchCard from "@/components/sports/MatchCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchAllFixtures, fetchUpcomingFixtures } from "@/lib/api";
+import { fetchPredictionsByFixtureIds } from "@/lib/supabase";
 import type { Match } from "@/lib/types";
+
+/**
+ * Join precomputed predictions (from Supabase, keyed by fixture id) onto the
+ * fixture list fetched from the backend. Fixtures without a fresh prediction
+ * keep their zeroed-out defaults, which MatchCard renders as
+ * "Prediction not yet available".
+ */
+async function withPredictions(fixtures: Match[]): Promise<Match[]> {
+  const ids = fixtures
+    .map((m) => Number(m.id))
+    .filter((id) => Number.isFinite(id));
+
+  const predictions = await fetchPredictionsByFixtureIds(ids);
+  if (predictions.size === 0) return fixtures;
+
+  return fixtures.map((match) => {
+    const pred = predictions.get(match.id);
+    if (!pred) return match;
+    return {
+      ...match,
+      homeProb: Math.round(pred.home_prob),
+      drawProb: Math.round(pred.draw_prob),
+      awayProb: Math.round(pred.away_prob),
+      prediction: pred.prediction,
+      confidence: pred.confidence,
+      isValueBet: pred.is_value_bet,
+      homeForm: pred.home_form,
+      awayForm: pred.away_form,
+      isLowQuality: pred.is_low_quality,
+    };
+  });
+}
 
 interface MatchListProps {
   sport: string;
@@ -42,6 +75,7 @@ function MatchCardSkeleton() {
 export default function MatchList({ sport, leagueId }: MatchListProps) {
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     if (sport !== "football") {
@@ -51,12 +85,24 @@ export default function MatchList({ sport, leagueId }: MatchListProps) {
 
     let cancelled = false;
     setLoading(true);
+    setError(false);
 
     const request = leagueId ? fetchUpcomingFixtures(leagueId) : fetchAllFixtures();
 
     request
+      .then(async (fixtures) => {
+        if (cancelled) return fixtures;
+        // Predictions are a best-effort enrichment — if Supabase is briefly
+        // unavailable, still show fixtures with "not yet available" cards
+        // rather than turning the whole list into an error state.
+        try {
+          return await withPredictions(fixtures);
+        } catch {
+          return fixtures;
+        }
+      })
       .then((data) => { if (!cancelled) setMatches(data); })
-      .catch(() => { if (!cancelled) setMatches([]); })
+      .catch(() => { if (!cancelled) { setMatches([]); setError(true); } })
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
@@ -79,6 +125,15 @@ export default function MatchList({ sport, leagueId }: MatchListProps) {
         {Array.from({ length: 6 }).map((_, i) => (
           <MatchCardSkeleton key={i} />
         ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-2 text-muted-foreground">
+        <span className="text-3xl">⚠️</span>
+        <p className="text-sm">Couldn&apos;t load matches. Please try again later.</p>
       </div>
     );
   }

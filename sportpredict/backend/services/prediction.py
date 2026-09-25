@@ -40,11 +40,18 @@ _model = None  # None → rule-based fallback is used
 if os.path.exists(MODEL_PATH):
     try:
         _model = joblib.load(MODEL_PATH)
-        logger.info("ML model loaded from %s", MODEL_PATH)
+        logger.info("STARTUP: XGBoost model loaded from %s — predictions will use model_used=xgboost", MODEL_PATH)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not load model at %s: %s — using rule-based fallback", MODEL_PATH, exc)
+        logger.warning(
+            "STARTUP: found a file at %s but failed to load it (%s) — "
+            "falling back to model_used=rule_based", MODEL_PATH, exc,
+        )
 else:
-    logger.info("No model file found at %s — using rule-based fallback", MODEL_PATH)
+    logger.warning(
+        "STARTUP: no model file at %s — falling back to model_used=rule_based. "
+        "Train one with ml/train.py and make sure it's deployed (not gitignored) "
+        "at this path.", MODEL_PATH,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -111,13 +118,31 @@ async def predict_match(
                                            comparing with bookmaker odds)
         features                         – raw feature dict for transparency
         model_used                       – "xgboost" | "rule_based"
+        is_low_quality                   – True if one or more data sources failed
+                                           and neutral defaults had to fill the gap
+        home_form / away_form            – raw form strings (e.g. "WWDLW") for display
     """
-    # Fetch all three data sources concurrently
+    # Fetch all three data sources concurrently. return_exceptions=True so a
+    # single failed call (e.g. rate limit exhausted) doesn't take down the
+    # other two — we still want a prediction, just flagged as low quality
+    # instead of silently defaulting the missing side to neutral features.
     home_stats, away_stats, h2h = await asyncio.gather(
         get_team_stats(home_id, league_id, season),
         get_team_stats(away_id, league_id, season),
         get_head_to_head(home_id, away_id, last=10),
+        return_exceptions=True,
     )
+
+    is_low_quality = False
+    if isinstance(home_stats, Exception):
+        logger.warning("predict_match: home team %d stats fetch failed: %s", home_id, home_stats)
+        home_stats, is_low_quality = {}, True
+    if isinstance(away_stats, Exception):
+        logger.warning("predict_match: away team %d stats fetch failed: %s", away_id, away_stats)
+        away_stats, is_low_quality = {}, True
+    if isinstance(h2h, Exception):
+        logger.warning("predict_match: H2H fetch failed for %d vs %d: %s", home_id, away_id, h2h)
+        h2h, is_low_quality = [], True
 
     features = build_match_features(home_stats, away_stats, h2h)
 
@@ -144,6 +169,9 @@ async def predict_match(
         "is_value_bet": False,  # enriched by the router when odds are available
         "features":   features,
         "model_used": model_used,
+        "is_low_quality": is_low_quality,
+        "home_form": home_stats.get("form", "") if isinstance(home_stats, dict) else "",
+        "away_form": away_stats.get("form", "") if isinstance(away_stats, dict) else "",
     }
 
 

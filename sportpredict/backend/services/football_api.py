@@ -5,8 +5,10 @@ Docs: https://www.football-data.org/documentation/quickstart
 All endpoints require the RapidAPI key in the request headers.
 """
 
+import asyncio
 import os
 import logging
+import time
 from typing import Any, Literal
 
 import httpx
@@ -25,6 +27,66 @@ _API_KEY = os.getenv("FOOTBALL_DATA_KEY", "")
 _HEADERS = {
     "X-Auth-Token": _API_KEY,
 }
+
+
+# ---------------------------------------------------------------------------
+# Global rate limiter — every football-data.org call funnels through _get(),
+# so a single sliding-window limiter here bounds ALL call sites at once
+# (predict/batch's concurrent asyncio.gather calls included). Capped below
+# the free-tier's 10 req/min to leave margin for clock skew between requests.
+# ---------------------------------------------------------------------------
+_MAX_REQUESTS_PER_MINUTE = 9
+_MAX_RETRIES = 3
+
+
+class _RateLimiter:
+    """Async sliding-window limiter shared by every caller of _get()."""
+
+    def __init__(self, max_per_minute: int) -> None:
+        self._max = max_per_minute
+        self._lock = asyncio.Lock()
+        self._timestamps: list[float] = []
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            while True:
+                now = time.monotonic()
+                self._timestamps = [t for t in self._timestamps if now - t < 60]
+                if len(self._timestamps) < self._max:
+                    self._timestamps.append(now)
+                    return
+                wait = 60 - (now - self._timestamps[0])
+                logger.info("Rate limiter: at %d req/min cap, waiting %.1fs", self._max, wait)
+                await asyncio.sleep(max(wait, 0.1))
+
+
+_rate_limiter = _RateLimiter(_MAX_REQUESTS_PER_MINUTE)
+
+
+# ---------------------------------------------------------------------------
+# Simple in-memory TTL cache — team stats and H2H are shared by many fixtures
+# (a team appears in several upcoming matches), so caching them avoids
+# redundant football-data.org calls within the same freshness window.
+# ---------------------------------------------------------------------------
+_CACHE_TTL_SECONDS = 6 * 60 * 60  # several hours
+
+_team_stats_cache: dict[tuple, tuple[float, dict]] = {}
+_h2h_cache: dict[tuple, tuple[float, list]] = {}
+
+
+def _cache_get(cache: dict, key: tuple) -> Any | None:
+    entry = cache.get(key)
+    if entry is None:
+        return None
+    cached_at, value = entry
+    if time.monotonic() - cached_at > _CACHE_TTL_SECONDS:
+        del cache[key]
+        return None
+    return value
+
+
+def _cache_set(cache: dict, key: tuple, value: Any) -> None:
+    cache[key] = (time.monotonic(), value)
 
 # ---------------------------------------------------------------------------
 # Season auto-resolution
@@ -88,21 +150,40 @@ async def _get(path: str, params: dict[str, Any] = None) -> Any:
     """
     Make a single GET request and return the full parsed JSON body.
 
+    Every call passes through the shared rate limiter first, then retries on
+    429 honoring the server's ``Retry-After`` header (falling back to a fixed
+    backoff if the header is absent) before giving up.
+
     Unlike the previous wrapper we return the full body (not just body["response"])
     because football-data.org structures vary per endpoint — each normalizer
     below handles its own key extraction.
     """
     url = f"{BASE_URL}{path}"
-    async with httpx.AsyncClient(headers=_HEADERS, timeout=_TIMEOUT) as client:
-        response = await client.get(url, params=params or {})
 
-    if response.status_code == 429:
-        raise APIFootballError(429, "Rate limit reached — wait 60s (free tier: 10 req/min)")
+    for attempt in range(_MAX_RETRIES + 1):
+        await _rate_limiter.acquire()
 
-    if response.status_code not in (200, 201):
-        raise APIFootballError(response.status_code, response.text[:200])
+        async with httpx.AsyncClient(headers=_HEADERS, timeout=_TIMEOUT) as client:
+            response = await client.get(url, params=params or {})
 
-    return response.json()
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After")
+            wait = float(retry_after) if retry_after and retry_after.isdigit() else 15.0
+            if attempt >= _MAX_RETRIES:
+                raise APIFootballError(429, "Rate limit reached — retries exhausted")
+            logger.warning(
+                "429 from football-data.org (attempt %d/%d) — retrying in %.0fs",
+                attempt + 1, _MAX_RETRIES, wait,
+            )
+            await asyncio.sleep(wait)
+            continue
+
+        if response.status_code not in (200, 201):
+            raise APIFootballError(response.status_code, response.text[:200])
+
+        return response.json()
+
+    raise APIFootballError(429, "Rate limit reached — retries exhausted")
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +259,11 @@ def _compute_team_stats(team_id: int, matches: list[dict], league_name: str) -> 
     away_goals_for:   list[int] = []
     home_goals_against: list[int] = []
     away_goals_against: list[int] = []
-    wins = draws = losses = 0
+    # Wins/draws/losses are tracked separately per venue — previously these were
+    # combined home+away totals assigned to BOTH the "home" and "away" keys,
+    # which inflated extract_win_rates() (total wins / home-only games played).
+    wins_home = draws_home = losses_home = 0
+    wins_away = draws_away = losses_away = 0
 
     for m in matches:
         score   = m.get("score", {})
@@ -193,25 +278,26 @@ def _compute_team_stats(team_id: int, matches: list[dict], league_name: str) -> 
             home_goals_for.append(home_g)
             home_goals_against.append(away_g)
             if winner == "HOME_TEAM":
-                form_chars.append("W"); wins += 1
+                form_chars.append("W"); wins_home += 1
             elif winner == "AWAY_TEAM":
-                form_chars.append("L"); losses += 1
+                form_chars.append("L"); losses_home += 1
             else:
-                form_chars.append("D"); draws += 1
+                form_chars.append("D"); draws_home += 1
         else:
             away_goals_for.append(away_g)
             away_goals_against.append(home_g)
             if winner == "AWAY_TEAM":
-                form_chars.append("W"); wins += 1
+                form_chars.append("W"); wins_away += 1
             elif winner == "HOME_TEAM":
-                form_chars.append("L"); losses += 1
+                form_chars.append("L"); losses_away += 1
             else:
-                form_chars.append("D"); draws += 1
+                form_chars.append("D"); draws_away += 1
 
     def avg(lst: list) -> str:
         return f"{sum(lst)/len(lst):.2f}" if lst else "0.00"
 
-    played = wins + draws + losses
+    played_home = wins_home + draws_home + losses_home
+    played_away = wins_away + draws_away + losses_away
 
     return {
         "team": { "id": team_id },
@@ -219,10 +305,10 @@ def _compute_team_stats(team_id: int, matches: list[dict], league_name: str) -> 
         # Form string — last 5 results, most-recent last (same convention as API-Football)
         "form": "".join(form_chars[-5:]),
         "fixtures": {
-            "played": { "home": len(home_goals_for), "away": len(away_goals_for), "total": played },
-            "wins":   { "home": wins,   "away": wins,   "total": wins   },
-            "draws":  { "home": draws,  "away": draws,  "total": draws  },
-            "loses":  { "home": losses, "away": losses, "total": losses },
+            "played": { "home": played_home, "away": played_away, "total": played_home + played_away },
+            "wins":   { "home": wins_home,   "away": wins_away,   "total": wins_home + wins_away   },
+            "draws":  { "home": draws_home,  "away": draws_away,  "total": draws_home + draws_away  },
+            "loses":  { "home": losses_home, "away": losses_away, "total": losses_home + losses_away },
         },
         "goals": {
             "for": {
@@ -289,7 +375,15 @@ async def get_team_stats(team_id: int, league_id: str, season: int | None = None
     football-data.org has no direct /teams/statistics endpoint on the free tier,
     so we reconstruct the same shape by fetching the team's finished matches
     and computing form, goals averages, and win/draw/loss totals ourselves.
+
+    Results are cached for a few hours (see ``_CACHE_TTL_SECONDS``) since the
+    same team appears in several upcoming fixtures within one refresh cycle.
     """
+    cache_key = (team_id, league_id, season)
+    cached = _cache_get(_team_stats_cache, cache_key)
+    if cached is not None:
+        return cached
+
     logger.info("Fetching team stats — team=%d competition=%s", team_id, league_id)
     body = await _get(
         f"/teams/{team_id}/matches",
@@ -302,7 +396,9 @@ async def get_team_stats(team_id: int, league_id: str, season: int | None = None
     )
     matches   = body.get("matches", [])
     comp_name = league_id                  # Use code as fallback label
-    return _compute_team_stats(team_id, matches, comp_name)
+    stats = _compute_team_stats(team_id, matches, comp_name)
+    _cache_set(_team_stats_cache, cache_key, stats)
+    return stats
 
 
 async def get_head_to_head(team1_id: int, team2_id: int, last: int = 10) -> list[dict]:
@@ -312,7 +408,15 @@ async def get_head_to_head(team1_id: int, team2_id: int, last: int = 10) -> list
     football-data.org provides a direct H2H endpoint under /matches/head2head
     using a match ID as anchor. Since we don't always have one, we fall back to
     fetching team1's recent matches and filtering for team2 as opponent.
+
+    Results are cached for a few hours (see ``_CACHE_TTL_SECONDS``) — the same
+    pairing is looked up on every prediction for a fixture within a cycle.
     """
+    cache_key = (team1_id, team2_id, last)
+    cached = _cache_get(_h2h_cache, cache_key)
+    if cached is not None:
+        return cached
+
     logger.info("Fetching H2H — %d vs %d", team1_id, team2_id)
     body = await _get(
         f"/teams/{team1_id}/matches",
@@ -327,7 +431,9 @@ async def get_head_to_head(team1_id: int, team2_id: int, last: int = 10) -> list
            or m.get("awayTeam", {}).get("id") == team2_id
     ][:last]
 
-    return [_normalize_match(m) for m in h2h]
+    result = [_normalize_match(m) for m in h2h]
+    _cache_set(_h2h_cache, cache_key, result)
+    return result
 
 
 async def get_standings(league_id: str, season: int | None = None) -> list[dict]:
