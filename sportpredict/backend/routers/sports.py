@@ -24,13 +24,14 @@ from pydantic import BaseModel, Field
 from services.ai_insight import AIInsightError, InsightResponse, generate_match_insight
 from services.fixtures_aggregator import get_cached_fixtures
 from services.football_api import APIFootballError, get_fixtures, get_standings
+from services.job_status import get_status as get_job_status
 from services.odds_api import (
     OddsAPIError,
     annotate_with_value_bets,
     find_match_odds,
     get_league_odds,
 )
-from services.prediction import predict_match, reload_model
+from services.prediction import get_model_status, predict_match, reload_model
 from services.football_api import resolve_season  # add alongside the existing football_api imports
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,22 @@ def _parse_fixture(raw: dict) -> FixtureResponse:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.get(
+    "/health",
+    summary="Backend job & model status — for manual/automated monitoring",
+)
+async def health() -> dict:
+    """
+    Report whether the real model is loaded (vs the rule_based fallback) and
+    when the background jobs last ran, so "is the prediction pipeline
+    actually working?" is a single request instead of grepping Railway logs.
+    """
+    return {
+        "model": get_model_status(),
+        "jobs": get_job_status(),
+    }
+
 
 @router.get("/leagues", summary="List all supported leagues grouped by country")
 async def list_leagues() -> dict[str, list[dict]]:

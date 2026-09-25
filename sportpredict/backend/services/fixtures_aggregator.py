@@ -17,6 +17,7 @@ import logging
 from datetime import datetime, timezone
 
 from services.football_api import APIFootballError, get_fixtures
+from services.job_status import record_fixtures_refresh
 
 logger = logging.getLogger(__name__)
 
@@ -63,3 +64,4 @@ async def refresh_all_fixtures() -> None:
     _cache["updated_at"] = datetime.now(timezone.utc).isoformat()
     logger.info("Refreshed all-fixtures cache — %d fixtures across %d competitions",
                 len(combined), len(ALL_LEAGUE_CODES))
+    record_fixtures_refresh(len(combined))

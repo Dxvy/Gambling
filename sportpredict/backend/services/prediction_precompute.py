@@ -8,18 +8,24 @@ limit if many users hit /sports at once). Instead this job walks every
 supported league on a schedule and fills the table so the frontend can just
 read it with the anon key — see components/sports/MatchList.tsx.
 
-Every football-data.org call made here goes through get_fixtures /
-predict_match, which both funnel through services/football_api.py's shared
+Fixture lists come from fixtures_aggregator's shared cache rather than a
+fresh get_fixtures() call per league — refresh_all_fixtures() already
+fetches the same 12 leagues on its own schedule, so re-fetching here would
+double the football-data.org calls needed on every startup/run for no
+benefit. Only predict_match()'s calls (team stats, H2H) hit the API from
+this module, and those funnel through services/football_api.py's shared
 rate limiter — no extra throttling needed at this layer.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from services.fixtures_aggregator import ALL_LEAGUE_CODES
-from services.football_api import APIFootballError, get_fixtures, resolve_season
+from services.fixtures_aggregator import ALL_LEAGUE_CODES, get_cached_fixtures
+from services.football_api import resolve_season
+from services.job_status import record_precompute
 from services.prediction import predict_match
 from services.supabase_admin import get_admin_client
 
@@ -63,16 +69,26 @@ async def precompute_predictions() -> int:
     client = get_admin_client()
     if client is None:
         logger.warning("precompute_predictions: Supabase admin client not configured — skipping")
+        record_precompute(0, error="Supabase admin client not configured")
         return 0
+
+    cache = get_cached_fixtures()
+    if not cache["fixtures"]:
+        logger.info("precompute_predictions: fixtures cache is empty — nothing to precompute yet")
+        record_precompute(0, error="fixtures cache empty")
+        return 0
+
+    by_league: dict[str, list[dict]] = defaultdict(list)
+    for f in cache["fixtures"]:
+        league_id = f.get("league", {}).get("id", "")
+        by_league[league_id].append(f)
 
     cutoff = datetime.now(timezone.utc) + timedelta(days=_LOOKAHEAD_DAYS)
     total_written = 0
 
     for league_id in ALL_LEAGUE_CODES:
-        try:
-            fixtures = await get_fixtures(league_id, next_n=_PER_LEAGUE_LIMIT)
-        except APIFootballError as exc:
-            logger.warning("precompute_predictions: fixtures fetch failed for %s: %s", league_id, exc)
+        fixtures = by_league.get(league_id, [])[:_PER_LEAGUE_LIMIT]
+        if not fixtures:
             continue
 
         upcoming = []
@@ -155,4 +171,5 @@ async def precompute_predictions() -> int:
                 logger.warning("precompute_predictions: upsert failed for fixture %s: %s", fixture_id, exc)
 
     logger.info("precompute_predictions: wrote %d predictions", total_written)
+    record_precompute(total_written)
     return total_written

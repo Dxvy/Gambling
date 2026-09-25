@@ -29,14 +29,26 @@ scheduler = AsyncIOScheduler()
 _JOB_DEFAULTS = dict(misfire_grace_time=60, coalesce=True, max_instances=1)
 
 
+async def _startup_fixtures_then_predictions() -> None:
+    """
+    precompute_predictions() now reads fixtures from refresh_all_fixtures()'s
+    shared cache instead of fetching them again itself (see
+    prediction_precompute.py), so on a cold start it must run after the
+    cache has been populated at least once — otherwise it finds an empty
+    cache and precomputes nothing. Both still run as one background task so
+    neither blocks the app from becoming ready for the healthcheck.
+    """
+    await refresh_all_fixtures()
+    await precompute_predictions()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.add_job(resolve_pending_predictions, "interval", hours=3, id="resolve_predictions", **_JOB_DEFAULTS)
     scheduler.add_job(refresh_all_fixtures, "interval", minutes=10, id="refresh_all_fixtures", **_JOB_DEFAULTS)
     scheduler.add_job(precompute_predictions, "interval", minutes=30, id="precompute_predictions", **_JOB_DEFAULTS)
     scheduler.start()
-    asyncio.create_task(refresh_all_fixtures())  # populate the cache immediately, don't block startup
-    asyncio.create_task(precompute_predictions())  # start filling match_predictions immediately too
+    asyncio.create_task(_startup_fixtures_then_predictions())
     yield
     scheduler.shutdown()
 

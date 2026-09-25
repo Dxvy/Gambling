@@ -193,3 +193,12 @@ def reload_model() -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.error("reload_model failed: %s", exc)
         return False
+
+
+def get_model_status() -> dict:
+    """Report which prediction path is currently active — used by GET /api/sports/health."""
+    return {
+        "model_used": "xgboost" if _model is not None else "rule_based",
+        "model_path": MODEL_PATH,
+        "model_file_exists": os.path.exists(MODEL_PATH),
+    }
