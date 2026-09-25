@@ -32,7 +32,10 @@ _FRESHNESS_SECONDS = 6 * 60 * 60
 
 # Only precompute fixtures kicking off within this window — no point spending
 # rate-limited API calls on matches weeks away where team form will change.
-_LOOKAHEAD_DAYS = 7
+# Widened from 7 to 14 days: international breaks regularly push a league's
+# next matchday out ~15 days, which left a 7-day window computing nothing
+# for days at a stretch (observed 2026-09-25 — see incident notes).
+_LOOKAHEAD_DAYS = 14
 
 # Fixtures pulled per league per run — mirrors fixtures_aggregator's per-league
 # limit to keep a single precompute pass bounded.
