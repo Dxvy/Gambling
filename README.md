@@ -35,7 +35,7 @@ Gambling/
 ### 1 — Clone
 
 ```bash
-git clone https://github.com/Dxvy/Gambling.git
+git clone https://github.com/Dxvy/SportPredict.git
 cd Gambling
 ```
 
